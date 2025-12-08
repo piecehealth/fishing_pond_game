@@ -1,0 +1,381 @@
+#!/usr/bin/env ruby
+# typed: false
+# frozen_string_literal: true
+
+require 'optparse'
+require_relative '../lib/game/tournament'
+require_relative '../lib/game/round'
+require_relative '../lib/report_generator'
+require_relative '../lib/strategy/examples/random_strategy'
+require_relative '../lib/strategy/examples/conservative_strategy'
+require_relative '../lib/strategy/examples/greedy_strategy'
+require_relative '../lib/strategy/examples/tit_for_tat_strategy'
+require_relative '../lib/strategy/examples/adaptive_strategy'
+require_relative '../lib/strategy/examples/punisher_strategy'
+
+# Parse command line options
+options = {
+  mode: :demo,
+  players: [],
+  rounds: 4,
+  interactive: false,
+  generate_reports: false
+}
+
+OptionParser.new do |opts|
+  opts.banner = "Usage: bin/play [options]"
+
+  opts.on("--interactive", "Run in interactive mode (pause after each round)") do
+    options[:interactive] = true
+  end
+
+  opts.on("--batch", "Run all rounds at once (default)") do
+    options[:interactive] = false
+  end
+
+  opts.on("--dry-run", "Play with built-in example strategies") do
+    options[:mode] = :dry_run
+  end
+
+  opts.on("--demo", "Quick demo with 4 random players") do
+    options[:mode] = :demo
+  end
+
+  opts.on("--players FILES", Array, "Comma-separated list of strategy files") do |files|
+    options[:players] = files
+    options[:mode] = :custom
+  end
+
+  opts.on("--tournament", "Load all strategies from strategies/ directory") do
+    options[:mode] = :tournament
+  end
+
+  opts.on("--rounds N", Integer, "Number of rounds to play") do |n|
+    options[:rounds] = n
+  end
+
+  opts.on("--reports", "Generate HTML reports for each round") do
+    options[:generate_reports] = true
+  end
+
+  opts.on("-h", "--help", "Show this help message") do
+    puts opts
+    exit
+  end
+end.parse!
+
+# Load strategies based on mode
+strategies = case options[:mode]
+when :demo
+  {
+    "Alice" => RandomStrategy.new("Alice"),
+    "Bob" => RandomStrategy.new("Bob"),
+    "Carol" => RandomStrategy.new("Carol"),
+    "Dave" => RandomStrategy.new("Dave")
+  }
+when :dry_run
+  {
+    "Conservative" => ConservativeStrategy.new("Conservative"),
+    "Greedy" => GreedyStrategy.new("Greedy"),
+    "TitForTat" => TitForTatStrategy.new("TitForTat"),
+    "Adaptive" => AdaptiveStrategy.new("Adaptive"),
+    "Punisher" => PunisherStrategy.new("Punisher"),
+    "Random" => RandomStrategy.new("Random")
+  }
+when :tournament
+  # Load all strategies from strategies/ directory
+  puts "🔍 Loading strategies from strategies/ directory..."
+  strategy_files = Dir.glob("strategies/*.rb")
+
+  if strategy_files.empty?
+    puts "❌ No strategy files found in strategies/ directory"
+    puts "   Please add .rb files to the strategies/ folder"
+    exit 1
+  end
+
+  strats = {}
+  strategy_files.each do |file|
+    begin
+      before_classes = ObjectSpace.each_object(Class).select { |k| k < BaseStrategy }.to_a
+      require File.expand_path(file)
+      after_classes = ObjectSpace.each_object(Class).select { |k| k < BaseStrategy }.to_a
+      new_classes = after_classes - before_classes
+
+      new_classes.each do |klass|
+        next if klass.name.nil?
+        player_name = klass.name
+        strats[player_name] = klass.new(player_name)
+        puts "  ✓ #{player_name}"
+      end
+    rescue StandardError => e
+      puts "  ⚠️  Skipped #{File.basename(file)}: #{e.message}"
+    end
+  end
+
+  if strats.empty?
+    puts "❌ No valid strategies loaded"
+    exit 1
+  end
+
+  puts "📊 Loaded #{strats.size} strategies"
+  strats
+when :custom
+  # Load user-provided strategy files
+  strats = {}
+  options[:players].each do |file|
+    begin
+      # Track classes before loading
+      before_classes = ObjectSpace.each_object(Class).select { |k| k < BaseStrategy }.to_a
+
+      require File.expand_path(file)
+
+      # Find new strategy classes
+      after_classes = ObjectSpace.each_object(Class).select { |k| k < BaseStrategy }.to_a
+      new_classes = after_classes - before_classes
+
+      new_classes.each do |klass|
+        next if klass.name.nil? # Skip anonymous classes
+        player_name = klass.name
+        strats[player_name] = klass.new(player_name)
+        puts "✓ Loaded: #{player_name} from #{File.basename(file)}"
+      end
+
+      if new_classes.empty?
+        puts "⚠️  Warning: No strategy class found in #{file}"
+      end
+    rescue LoadError => e
+      puts "❌ Error loading #{file}: #{e.message}"
+      exit 1
+    rescue StandardError => e
+      puts "❌ Error instantiating strategy from #{file}: #{e.message}"
+      exit 1
+    end
+  end
+  strats
+else
+  {
+    "Alice" => RandomStrategy.new("Alice"),
+    "Bob" => RandomStrategy.new("Bob")
+  }
+end
+
+# Ensure even number of players
+if strategies.length.odd?
+  puts "⚠️  Warning: Odd number of players (#{strategies.length}). One player will sit out each round."
+end
+
+puts "🎣 Fishing Pond Game"
+puts "=" * 60
+puts "Players: #{strategies.keys.join(', ')}"
+puts "Rounds: #{options[:rounds]}"
+puts "Mode: #{options[:interactive] ? 'Interactive' : 'Batch'}"
+puts "=" * 60
+puts
+
+# Initialize player history
+all_players_history = {}
+strategies.keys.each do |name|
+  all_players_history[name] = PlayerHistory.new(
+    partners: [],
+    catches: [],
+    scores: []
+  )
+end
+
+round_results = []
+current_round = 1
+
+def display_round_summary(round_result, all_players_history)
+  puts "\n📊 Round #{round_result.round_number} Summary"
+  puts "-" * 60
+
+  # Show pairings
+  puts "\n🤝 Pairings:"
+  round_result.pairing_results.each_value do |pr|
+    mutual = round_result.pairings.any? do |p|
+      (p.player1_name == pr.player1_name || p.player2_name == pr.player1_name) &&
+      p.was_mutual_first_choice
+    end
+    mutual_tag = mutual ? " 💚 (Mutual)" : ""
+    puts "  #{pr.player1_name} vs #{pr.player2_name}#{mutual_tag}"
+    puts "    Scores: #{pr.player1_name}=#{pr.player1_total}, #{pr.player2_name}=#{pr.player2_total}"
+
+    # Check if pond was depleted
+    depleted = pr.turn_results.any? { |tr| !tr.success }
+    puts "    ❌ Pond depleted!" if depleted
+  end
+
+  # Show current standings
+  puts "\n🏆 Current Standings:"
+  all_players_history.map { |name, hist| [name, hist.scores.sum] }
+    .sort_by { |_, score| -score }
+    .each_with_index do |(name, score), idx|
+      medal = ["🥇", "🥈", "🥉"][idx] || "  "
+      puts "  #{medal} #{name}: #{score} fish"
+    end
+  puts
+end
+
+# Main game loop
+if options[:interactive]
+  # Interactive mode
+  loop do
+    break if current_round > options[:rounds]
+
+    puts "\n" + "=" * 60
+    puts "Starting Round #{current_round}..."
+    puts "=" * 60
+
+    round_result = Round.play(current_round, strategies, all_players_history)
+    round_results << round_result
+
+    # Update player history
+    player_round_data = Hash.new { |h, k| h[k] = { partner: "", catches: [], score: 0 } }
+    round_result.pairing_results.each_value do |pr|
+      player_round_data[pr.player1_name] = {
+        partner: pr.player2_name,
+        catches: pr.player1_catches,
+        score: pr.player1_total
+      }
+      player_round_data[pr.player2_name] = {
+        partner: pr.player1_name,
+        catches: pr.player2_catches,
+        score: pr.player2_total
+      }
+    end
+
+    all_players_history.each do |name, history|
+      data = player_round_data[name]
+      if data
+        history.partners << data[:partner]
+        history.catches << data[:catches]
+        history.scores << data[:score]
+      else
+        history.partners << ""
+        history.catches << []
+        history.scores << 0
+      end
+    end
+
+    # Display round summary
+    display_round_summary(round_result, all_players_history)
+
+    # Generate report if requested
+    if options[:generate_reports]
+      report_path = "reports/round_#{current_round}.html"
+      ReportGenerator.generate_round_report(round_result, all_players_history, report_path, strategies)
+      puts "📄 Report saved to #{report_path}"
+    end
+
+    # Interactive prompt
+    if current_round < options[:rounds]
+      print "\nRound #{current_round} complete. Press Enter to continue, 'q' to quit, or 'r' for report: "
+      input = gets.chomp.downcase
+      break if input == 'q' || input == 'quit'
+    end
+
+    current_round += 1
+  end
+else
+  # Batch mode - play all rounds
+  options[:rounds].times do |round_idx|
+    round_number = round_idx + 1
+    puts "Playing Round #{round_number}..."
+
+    round_result = Round.play(round_number, strategies, all_players_history)
+    round_results << round_result
+
+    # Update player history
+    player_round_data = Hash.new { |h, k| h[k] = { partner: "", catches: [], score: 0 } }
+    round_result.pairing_results.each_value do |pr|
+      player_round_data[pr.player1_name] = {
+        partner: pr.player2_name,
+        catches: pr.player1_catches,
+        score: pr.player1_total
+      }
+      player_round_data[pr.player2_name] = {
+        partner: pr.player1_name,
+        catches: pr.player2_catches,
+        score: pr.player2_total
+      }
+    end
+
+    all_players_history.each do |name, history|
+      data = player_round_data[name]
+      if data
+        history.partners << data[:partner]
+        history.catches << data[:catches]
+        history.scores << data[:score]
+      else
+        history.partners << ""
+        history.catches << []
+        history.scores << 0
+      end
+    end
+
+    # Display round summary
+    display_round_summary(round_result, all_players_history)
+
+    # Generate report if requested
+    if options[:generate_reports]
+      report_path = "reports/round_#{round_number}.html"
+      ReportGenerator.generate_round_report(round_result, all_players_history, report_path, strategies)
+      puts "📄 Report saved to #{report_path}"
+    end
+  end
+end
+
+# Final results
+puts "\n" + "=" * 60
+puts "🏆 Tournament Complete!"
+puts "=" * 60
+puts
+
+final_scores = all_players_history.map { |name, hist| [name, hist.scores.sum] }
+  .sort_by { |_, score| -score }
+
+puts "Final Standings:"
+final_scores.each_with_index do |(name, score), idx|
+  medal = ["🥇", "🥈", "🥉"][idx] || "#{idx + 1}."
+  puts "  #{medal} #{name}: #{score} fish"
+end
+
+winner = final_scores.first[0]
+puts "\n🎉 Winner: #{winner}!"
+puts
+
+# Display strategy thoughts if available
+if strategies && !options[:generate_reports]
+  puts "\n" + "=" * 60
+  puts "💭 Strategy Thoughts"
+  puts "=" * 60
+
+  strategies.each do |name, strategy|
+    puts "\n【#{name}】"
+    thoughts = strategy.all_thoughts
+
+    if thoughts.empty?
+      puts "  (No thoughts recorded)"
+      next
+    end
+
+    thoughts.each do |round_num, round_data|
+      puts "  Round #{round_num}:"
+
+      round_data.each do |phase, content|
+        if phase == "choose_catch" && content.is_a?(Hash)
+          content.each do |turn, messages|
+            messages.each do |msg|
+              puts "    Turn #{turn}: #{msg}"
+            end
+          end
+        elsif content.is_a?(Array)
+          content.each do |msg|
+            puts "    [#{phase}]: #{msg}"
+          end
+        end
+      end
+    end
+  end
+  puts
+end

@@ -1,0 +1,53 @@
+#!/usr/bin/env ruby
+# typed: false
+# frozen_string_literal: true
+
+puts "🎣 Fishing Pond Game - Setup"
+puts "=" * 60
+puts
+
+# Check Ruby version
+ruby_version = RUBY_VERSION
+puts "✓ Ruby version: #{ruby_version}"
+
+# Install dependencies
+puts "\n📦 Installing dependencies..."
+system("bundle install --quiet")
+puts "✓ Dependencies installed"
+
+# Create necessary directories
+puts "\n📁 Creating directories..."
+require 'fileutils'
+FileUtils.mkdir_p('reports')
+FileUtils.mkdir_p('strategies')
+FileUtils.mkdir_p('spec/tmp')
+puts "✓ Directories created"
+
+# Run tests to verify setup
+puts "\n🧪 Running tests..."
+if system("bundle exec rspec --format progress --no-color")
+  puts "✓ All tests passed"
+else
+  puts "⚠️  Some tests failed, but the game should still work"
+end
+
+puts "\n" + "=" * 60
+puts "✅ Setup complete!"
+puts "=" * 60
+puts
+puts "🎮 Quick Start:"
+puts
+puts "1. Run a quick demo:"
+puts "   bin/play --demo"
+puts
+puts "2. Play with all example strategies and generate reports:"
+puts "   bin/play --dry-run --rounds 4 --reports"
+puts
+puts "3. Interactive mode (pause after each round):"
+puts "   bin/play --dry-run --interactive --reports"
+puts
+puts "4. View generated reports:"
+puts "   open reports/round_1.html"
+puts
+puts "📖 For more options, run: bin/play --help"
+puts

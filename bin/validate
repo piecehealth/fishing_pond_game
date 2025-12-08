@@ -1,0 +1,138 @@
+#!/usr/bin/env ruby
+# typed: false
+# frozen_string_literal: true
+
+require_relative '../lib/strategy/base_strategy'
+require_relative '../lib/types'
+
+def validate_strategy_file(file_path)
+  puts "🔍 Validating strategy file: #{file_path}"
+  puts "-" * 60
+
+  # Check if file exists
+  unless File.exist?(file_path)
+    puts "❌ Error: File not found"
+    return false
+  end
+
+  # Try to load the file
+  begin
+    require File.expand_path(file_path)
+  rescue LoadError => e
+    puts "❌ Error loading file: #{e.message}"
+    return false
+  rescue SyntaxError => e
+    puts "❌ Syntax error: #{e.message}"
+    return false
+  rescue StandardError => e
+    puts "❌ Error: #{e.message}"
+    return false
+  end
+
+  # Find strategy classes defined in the file
+  strategy_classes = ObjectSpace.each_object(Class).select do |klass|
+    klass < BaseStrategy && !klass.name.nil?
+  end
+
+  if strategy_classes.empty?
+    puts "❌ No strategy class found that inherits from BaseStrategy"
+    return false
+  end
+
+  puts "✅ Found #{strategy_classes.length} strategy class(es): #{strategy_classes.map(&:name).join(', ')}"
+
+  # Validate each strategy class
+  all_valid = true
+  strategy_classes.each do |klass|
+    puts "\nValidating #{klass.name}..."
+
+    # Try to instantiate
+    begin
+      strategy = klass.new("TestPlayer")
+      puts "  ✅ Can instantiate"
+    rescue StandardError => e
+      puts "  ❌ Cannot instantiate: #{e.message}"
+      all_valid = false
+      next
+    end
+
+    # Check if choose_catch method exists and has correct signature
+    begin
+      # Create mock data
+      test_result = strategy.choose_catch(
+        1,                          # round_number
+        1,                          # turn_number
+        100,                        # pond_fish
+        [],                         # my_history
+        [],                         # partner_history
+        "TestPartner",              # partner_name
+        {}                          # all_players_history
+      )
+
+      if test_result.is_a?(Integer) && test_result >= 0 && test_result <= 30
+        puts "  ✅ choose_catch method works (returned #{test_result})"
+      else
+        puts "  ❌ choose_catch returned invalid value: #{test_result} (must be 0-30)"
+        all_valid = false
+      end
+    rescue NotImplementedError
+      puts "  ❌ choose_catch method not implemented"
+      all_valid = false
+    rescue StandardError => e
+      puts "  ❌ Error in choose_catch: #{e.message}"
+      all_valid = false
+    end
+
+    # Check if choose_partners method exists
+    begin
+      other_players = ["Player1", "Player2", "Player3"]
+      test_history = {
+        "Player1" => PlayerHistory.new(partners: [], catches: [], scores: []),
+        "Player2" => PlayerHistory.new(partners: [], catches: [], scores: []),
+        "Player3" => PlayerHistory.new(partners: [], catches: [], scores: [])
+      }
+
+      choices = strategy.choose_partners(2, other_players, test_history)
+
+      if choices.is_a?(Array) && choices.length == 2 && choices.all? { |c| c.is_a?(String) }
+        if choices[0] != choices[1]
+          puts "  ✅ choose_partners method works (chose #{choices[0]} and #{choices[1]})"
+        else
+          puts "  ❌ choose_partners returned duplicate choices"
+          all_valid = false
+        end
+      else
+        puts "  ❌ choose_partners returned invalid value: #{choices.inspect}"
+        all_valid = false
+      end
+    rescue NotImplementedError
+      puts "  ❌ choose_partners method not implemented"
+      all_valid = false
+    rescue StandardError => e
+      puts "  ❌ Error in choose_partners: #{e.message}"
+      puts "     #{e.backtrace.first(3).join("\n     ")}"
+      all_valid = false
+    end
+  end
+
+  puts "\n" + "-" * 60
+  if all_valid
+    puts "✅ Validation passed! Strategy file is ready to use."
+    true
+  else
+    puts "❌ Validation failed. Please fix the errors above."
+    false
+  end
+end
+
+# Main execution
+if ARGV.empty?
+  puts "Usage: bin/validate <strategy_file.rb>"
+  puts "\nExample:"
+  puts "  bin/validate strategies/my_strategy.rb"
+  exit 1
+end
+
+file_path = ARGV[0]
+success = validate_strategy_file(file_path)
+exit(success ? 0 : 1)
