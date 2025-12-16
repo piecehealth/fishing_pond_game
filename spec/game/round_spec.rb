@@ -102,5 +102,94 @@ RSpec.describe Round do
         expect(pairing_result.player2_catches.length).to eq(10)
       end
     end
+
+    context 'when a player tries to choose themselves as partner' do
+      # Strategy that always tries to choose itself
+      class SelfishStrategy < BaseStrategy
+        extend T::Sig
+
+        sig do
+          override.params(
+            round_number: Integer,
+            turn_number: Integer,
+            pond_fish: Integer,
+            my_history: T::Array[Integer],
+            partner_history: T::Array[Integer],
+            partner_name: String,
+            all_players_history: T::Hash[String, PlayerHistory]
+          ).returns(Integer)
+        end
+        def choose_catch(round_number, turn_number, pond_fish, my_history, partner_history, partner_name, all_players_history)
+          3
+        end
+
+        sig do
+          override.params(
+            round_number: Integer,
+            all_players: T::Array[String],
+            all_players_history: T::Hash[String, PlayerHistory]
+          ).returns([String, String])
+        end
+        def choose_partners(round_number, all_players, all_players_history)
+          # Intentionally try to choose self as both partners
+          [@name, @name]
+        end
+      end
+
+      let(:selfish_strategies) do
+        {
+          'Alice' => SelfishStrategy.new('Alice'),
+          'Bob' => ConservativeStrategy.new('Bob'),
+          'Carol' => ConservativeStrategy.new('Carol'),
+          'Dave' => ConservativeStrategy.new('Dave')
+        }
+      end
+
+      let(:history_after_round1) do
+        {
+          'Alice' => PlayerHistory.new(
+            partners: ['Bob'],
+            catches: [[3, 3, 3, 3, 3, 3, 3, 3, 3, 3]],
+            scores: [30]
+          ),
+          'Bob' => PlayerHistory.new(
+            partners: ['Alice'],
+            catches: [[3, 3, 3, 3, 3, 3, 3, 3, 3, 3]],
+            scores: [30]
+          ),
+          'Carol' => PlayerHistory.new(
+            partners: ['Dave'],
+            catches: [[3, 3, 3, 3, 3, 3, 3, 3, 3, 3]],
+            scores: [30]
+          ),
+          'Dave' => PlayerHistory.new(
+            partners: ['Carol'],
+            catches: [[3, 3, 3, 3, 3, 3, 3, 3, 3, 3]],
+            scores: [30]
+          )
+        }
+      end
+
+      it 'prevents a player from being paired with themselves' do
+        result = Round.play(2, selfish_strategies, history_after_round1)
+
+        # Verify that Alice is not paired with themselves
+        result.pairings.each do |pairing|
+          if pairing.player1_name == 'Alice'
+            expect(pairing.player2_name).not_to eq('Alice')
+          elsif pairing.player2_name == 'Alice'
+            expect(pairing.player1_name).not_to eq('Alice')
+          end
+        end
+      end
+
+      it 'successfully completes the round even with invalid self-selection' do
+        result = Round.play(2, selfish_strategies, history_after_round1)
+
+        expect(result.round_number).to eq(2)
+        expect(result.pairings.length).to eq(2)
+        expect(result.pairing_results.length).to eq(2)
+      end
+    end
   end
 end

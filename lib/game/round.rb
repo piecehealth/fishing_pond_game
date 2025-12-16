@@ -79,9 +79,49 @@ class Round
     strategies.each do |name, strategy|
       strategy.set_context(round: round_number, phase: "choose_partners")
       choices = strategy.choose_partners(round_number, players, all_players_history)
-      preferences[name] = choices
+
+      # Validate choices - players cannot choose themselves
+      validated_choices = validate_partner_choices(name, choices, players)
+      preferences[name] = validated_choices
     end
     preferences
+  end
+
+  sig do
+    params(
+      player_name: String,
+      choices: [String, String],
+      all_players: T::Array[String]
+    ).returns([String, String])
+  end
+  private_class_method def self.validate_partner_choices(player_name, choices, all_players)
+    first_choice = T.let(choices[0], String)
+    second_choice = T.let(choices[1], String)
+
+    # Get list of valid partners (all players except self)
+    valid_partners = all_players.reject { |p| p == player_name }
+
+    # If there are no valid partners (shouldn't happen), return original choices
+    return [first_choice, second_choice] if valid_partners.empty?
+
+    # If player chose themselves as first choice, pick a random valid partner
+    if first_choice == player_name
+      first_choice = T.cast(valid_partners.sample, String)
+    end
+
+    # If player chose themselves as second choice, pick a random valid partner
+    if second_choice == player_name
+      second_choice = T.cast(valid_partners.sample, String)
+    end
+
+    # Ensure the two choices are different
+    if first_choice == second_choice
+      # Pick a different partner for second choice
+      alternative_partners = valid_partners.reject { |p| p == first_choice }
+      second_choice = T.cast(alternative_partners.sample, String) unless alternative_partners.empty?
+    end
+
+    [first_choice, second_choice]
   end
 
   sig do
