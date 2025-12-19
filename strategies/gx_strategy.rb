@@ -40,7 +40,7 @@ class GxStrategy < BaseStrategy
 
     unless catches.nil? || turn_number - 1 >= catches.length
       num = catches[turn_number - 1] + 1
-      return [num, 30].min
+      return [num, 30, [1, (pond_fish / 2).round].max].min
     end
 
     greedy(pond_fish)
