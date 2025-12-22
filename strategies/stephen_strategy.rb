@@ -32,8 +32,8 @@ class StephenStrategy < BaseStrategy
     log_thought("Pond: #{pond_fish} fish")
 
     if turn_number < 3
-      log_thought("Show love to fish and partners")
-      return 0
+      log_thought("Show love to fish and partners, but catch 5")
+      return 5
     end
 
     return 30 if should_punish_partner?(turn_number, pond_fish, partner_history)
@@ -86,7 +86,7 @@ class StephenStrategy < BaseStrategy
     partner_is_cooperating = recent_catches.all? { |catch| catch < 10 }
     return false if partner_is_cooperating
 
-    pond_health < -30
+    pond_health < -15  # Changed from -30 to punish earlier
   end
 
   sig { params(turn_number: Integer, pond_fish: Integer).returns(Integer) }
